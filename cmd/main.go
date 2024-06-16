@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	host = "localhost"
+	host = "0.0.0.0"
 	port = "23236"
 )
 
@@ -29,13 +29,6 @@ func main() {
 			logging.Middleware(),
 			middlewares.ListMiddleware(),
 		),
-		// ),
-		// wish.WithMiddleware(
-		// 	middlewares.ArticleListMiddleware(),
-		// ),
-		// wish.WithMiddleware(
-		// 	middlewares.LoginMiddleware(middlewares.ArticleListMiddleware()),
-		// ),
 	)
 	if err != nil {
 		log.Error("Could not start server", "error", err)
