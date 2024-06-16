@@ -29,24 +29,29 @@ type model struct {
 	altscreen    bool              // if we want to enter the fullscreen or not
 }
 
-// list
+// list interface implementing the list.model from bubble tea
 type listViewModel struct {
 	list         list.Model
 	showSelected bool
 }
 
-// textarea
+// textarea interface implementing the textarea.model from the bubble tea
 type textareaViewModel struct {
 	textarea     textarea.Model
 	showTextArea bool
 }
 
-// item
+// custom item interface for storing the title, desc, content of the list items
 type listItemViewModel struct {
 	title           string
 	desc            string
 	content         string
 	showItemContent bool
+}
+
+// Struct to hold a slice of items
+type itemsMsg struct {
+	items []listItemViewModel
 }
 
 // Method to return the FilterValue for an item (used for filtering)
@@ -59,17 +64,19 @@ func (m model) Init() tea.Cmd {
 	return fetchItems
 }
 
-// main_view.go
+/*VIEWS METHODS IMPLEMENTED FORM TEH BUBBLE TEA ARCHITECTURE ------------------------------------------------------------------------------------------------- */
+
+// styles to render the list module of the bubble tea goes here
 func (m listViewModel) View() string {
 	return docStyle.Render(m.list.View())
 }
 
-// text_area_view.go
+// styles to render the textarea of bubble tea goes here
 func (m textareaViewModel) View() string {
 	return m.textarea.View()
 }
 
-// content_view.go
+// styles to render the individual item of list goes here
 func (m listItemViewModel) View() string {
 
 	return lipgloss.JoinVertical(lipgloss.Left,
@@ -78,74 +85,105 @@ func (m listItemViewModel) View() string {
 	)
 }
 
+// our main view (how to when to render which component based on 'currentView' field of module interface )
 func (m model) View() string {
+	// if quitting is true simply return text exiting the terminal
 	if m.quitting {
-		return "exiting"
+		return "exiting the ssh session"
 	}
 
 	switch m.currentView {
+
+	// if currentView == 1 then render the list component
 	case 1:
 		return m.listView.View()
+
+	// if currentView == 2 then render the textarea component
 	case 2:
 		return m.textareaView.View()
+
+	// if currentView == 3 then render the selected list item
 	case 3:
 		return m.listItemView.View()
+
+	// default
 	default:
 		return "Invalid view"
 	}
 }
 
+/*UPDATE METHODS IMPLEMENTED FROM BUBBLE TEA ARCHITECTURE ------------------------------------------------------------------------------------------------------------------- */
+
+// when to update the current module interface which contains the current state of the application
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// based on the keypressed on the client side we update the module (current state of application)
 	switch msg := msg.(type) {
+
+	// when the terminal's width and height is changed then update the height and weight styles of the components
 	case tea.WindowSizeMsg:
 		m.listView.list.SetSize(msg.Width-20, msg.Height-10)
 		return m, nil
+
+	// based on the pressed keys on the keyboard update the module (current state) logic :
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "ctrl+c":
+
+		// if ctrl+c pressed quit the terminal session
+		case "ctrl+c":
 			m.quitting = true
-			return m, tea.Quit
-		case "a":
+			return m, tea.Quit //current state, quit command
+
+		// if ctrl+a presses toggle between list and textarea
+		case "ctrl+a":
 			m.textareaView.showTextArea = !m.textareaView.showTextArea
-			m.currentView = 2 // Switch to textarea view
-			return m, nil
-		case "enter":
 			if m.textareaView.showTextArea {
-				// Handle textarea submission
+				m.currentView = 2 // render textarea
+			} else {
+				m.currentView = 1 // render list
+			}
+			return m, nil
+
+		// if enter is presses :
+		case "enter":
+			// if enter is presses and textarea is open then update the list with textarea content
+			if m.textareaView.showTextArea {
+				// create a new list item with textarea submission
 				newItem := listItemViewModel{
 					title: m.textareaView.textarea.Value(),
 					desc:  "Description for " + m.textareaView.textarea.Value(),
 				}
+				// insert created item into the list at the end
 				m.listView.list.InsertItem(len(m.listView.list.Items()), newItem)
+				// go back to list view
 				m.textareaView.showTextArea = false
 				m.currentView = 1 // Switch back to main view
 				return m, nil
-			} else {
-				// Handle item selection
-				// i := m.listView.list.SelectedItem()
-				//fmt.Print(i)
-				// m.textareaView.showTextArea = !m.textareaView.showTextArea
+
+			} else if m.listItemView.showItemContent {
+				// get the selected item from the list
 				i, ok := m.listView.list.SelectedItem().(listItemViewModel)
+				// render the selected item's content into another component we created for desplaying the notes content
 				if ok {
+					// saves the selected items title, desc, content into m.listItemView from i
 					m.listItemView = i
 					m.currentView = 3 // Switch to content view
 				}
-
 				return m, nil
 			}
-		case "ctrl+a":
-			m.currentView = 1
-			return m, nil
+
 		case "p":
-			// Handle alt screen
+			// toggle fullscreen on/off
 			if m.altscreen {
 				return m, tea.ExitAltScreen
 			} else {
 				return m, tea.EnterAltScreen
 			}
 		}
+
+	// when the init method fetches the list from api it returns a tea.msg which is of type itemsMsg struct which triggers this case
 	case itemsMsg:
 		var items []list.Item
+		// we update the list.model using the fetched list
 		for _, i := range msg.items {
 			items = append(items, i)
 		}
@@ -155,6 +193,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// based on the m.currentView update the view
 	switch m.currentView {
 	case 1:
 		var cmd tea.Cmd
@@ -173,7 +212,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// Fetch dummy items for the list
+/* ----------------------------------------------------------------------------------------------------------------------- */
+
+// Fetch dummy items for the list / later we will fetch these from the database from api
 func fetchItems() tea.Msg {
 	dummyItems := []listItemViewModel{
 		{
@@ -206,10 +247,27 @@ func fetchItems() tea.Msg {
 	return itemsMsg{items: dummyItems}
 }
 
-// Struct to hold a slice of items
-type itemsMsg struct {
-	items []listItemViewModel
-}
+// // Main
+// func main() {
+// 	// Initialize components
+// 	l := list.New([]list.Item{}, list.NewDefaultDelegate(), 6, 24)
+// 	l.Title = "your notes -> "
+// 	t := textarea.New()
+// 	t.Placeholder = "write text here ......!"
+// 	t.Focus()
+// 	t.CharLimit = 200
+// 	t.ShowLineNumbers = true
+
+// 	m := model{
+// 		listView:     listViewModel{list: l},
+// 		textareaView: textareaViewModel{textarea: t},
+// 	}
+
+// 	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {
+// 		fmt.Println("Error running program:", err)
+// 		os.Exit(1)
+// 	}
+// }
 
 func ListMiddleware() wish.Middleware {
 	teaHandler := func(s ssh.Session) *tea.Program {
