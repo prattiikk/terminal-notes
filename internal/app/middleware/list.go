@@ -1,12 +1,14 @@
-// Package and imports
 package middlewares
 
 import (
+	"fmt"
+
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/ssh"
 	"github.com/charmbracelet/wish"
@@ -19,12 +21,21 @@ var docStyle = lipgloss.NewStyle().Margin(4, 10, 0)
 
 // Define the main model struct
 type model struct {
-	listView     listViewModel     // Struct for list.model
-	textareaView textareaViewModel // Struct for textarea.model
-	viewportView viewportViewModel // Struct for viewport.model
-	listItemView listItemViewModel // Struct for selected-item
-	currentView  int               // Current page to render
-	quitting     bool              // Flag to exit the program
+	formModel    *formModel
+	listView     listViewModel
+	textareaView textareaViewModel
+	viewportView viewportViewModel
+	listItemView listItemViewModel
+	currentView  int
+	quitting     bool
+	loggedIn     bool
+}
+
+// Define the form model struct
+type formModel struct {
+	form  *huh.Form
+	style lipgloss.Style
+	state huh.FormState
 }
 
 // Define the list view model struct
@@ -64,13 +75,25 @@ func (i listItemViewModel) Title() string       { return i.title }
 func (i listItemViewModel) Description() string { return i.desc }
 
 // Init method
+
 func (m model) Init() tea.Cmd {
-	return fetchItems
+
+	if m.formModel != nil && m.formModel.form != nil {
+		// If the form model is not nil, initialize the form
+		fmt.Println("about to start the form init")
+		return m.formModel.form.Init()
+	}
+	return func() tea.Msg {
+		// Fetch the user's list items based on the username stored in the form
+		username := m.formModel.form.GetString("username")
+		// password := m.formModel.form.GetString("password")
+		fmt.Println(username)
+		return fetchItems(username)
+	}
+
 }
 
 /* VIEW METHODS */
-
-// Renders the list view
 func (m listViewModel) View() string {
 	return docStyle.Render(m.list.View())
 }
@@ -109,40 +132,113 @@ func (m listItemViewModel) View() string {
 	)
 }
 
-// Main view function
+// // Renders the login form view
+// func (m model) View() string {
+// 	if m.quitting {
+// 		return "exiting the ssh session"
+// 	}
+
+// 	// if m.formModel == nil {
+// 	// 	return "Starting..."
+// 	// }
+
+// 	if m.formModel.state == huh.StateCompleted {
+// 		return m.formModel.style.Render("Welcome, " + m.formModel.form.GetString("username") + "!")
+// 	}
+// 	switch m.currentView {
+// 	case 1:
+// 		return m.listView.View()
+// 	case 2:
+// 		return lipgloss.JoinHorizontal(lipgloss.Top, m.textareaView.View(), m.viewportView.View())
+// 	case 3:
+// 		centeredViewportStyle := lipgloss.NewStyle().
+// 			MarginLeft(40).
+// 			Render(m.viewportView.View())
+// 		return centeredViewportStyle
+// 		// return m.viewportView.View()
+// 	default:
+// 		return m.formModel.form.View()
+
+// 	}
+
+// }
+
+// Renders the login form view
 func (m model) View() string {
 	if m.quitting {
 		return "exiting the ssh session"
 	}
 
-	switch m.currentView {
-	case 1:
-		return m.listView.View()
-	case 2:
-		return lipgloss.JoinHorizontal(lipgloss.Top, m.textareaView.View(), m.viewportView.View())
-	case 3:
-		centeredViewportStyle := lipgloss.NewStyle().
-			MarginLeft(40).
-			Render(m.viewportView.View())
-		return centeredViewportStyle
-		// return m.viewportView.View()
-	default:
-		return "Invalid view"
+	// Prioritize the current view after form submission
+	if m.loggedIn {
+		switch m.currentView {
+		case 1:
+			return m.listView.View()
+		case 2:
+			return lipgloss.JoinHorizontal(lipgloss.Top, m.textareaView.View(), m.viewportView.View())
+		case 3:
+			centeredViewportStyle := lipgloss.NewStyle().
+				MarginLeft(40).
+				Render(m.viewportView.View())
+			return centeredViewportStyle
+		default:
+			return m.listView.View() // Default to list view if logged in
+		}
 	}
+
+	// If the form is still active (not submitted), render the form view
+	return m.formModel.form.View()
 }
 
 /* UPDATE METHODS */
 
 // Update method to handle key presses and window resizing
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	// Update the form if it's not nil
+	if m.formModel != nil {
+		f, cmd := m.formModel.form.Update(msg)
+		m.formModel.form = f.(*huh.Form)
+		m.formModel.state = m.formModel.form.State
+		cmds = append(cmds, cmd)
+	}
+
+	// Handle the form state and user login status
+	if m.formModel != nil {
+		switch m.formModel.state {
+		case huh.StateAborted:
+			return m, tea.Quit
+
+		case huh.StateCompleted:
+			if !m.loggedIn {
+				// Successfully logged in; redirect to the list view
+				username := m.formModel.form.GetString("username")
+				fmt.Println("form is in update state with values:", username)
+				m.currentView = 1
+				m.loggedIn = true
+
+				// Command to fetch the user's list items
+				cmd := func() tea.Msg {
+					return fetchItems(username)
+				}
+				cmds = append(cmds, cmd)
+
+				// Return the updated model and combined commands
+				return m, tea.Batch(cmds...)
+			}
+		}
+	}
+
+	// Handle messages for resizing and input events
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		// Adjust the sizes of the views based on window size
 		m.listView.list.SetSize(msg.Width-20, msg.Height-10)
 		m.viewportView.viewport.Width = msg.Width / 2
 		m.viewportView.viewport.Height = msg.Height - 4
 		m.textareaView.textarea.SetWidth(msg.Width / 2)
 		m.textareaView.textarea.SetHeight(msg.Height - 4)
-
 		return m, nil
 
 	case tea.KeyMsg:
@@ -174,16 +270,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "ctrl+z":
 			if m.currentView == 1 {
-				i, ok := m.listView.list.SelectedItem().(listItemViewModel)
-				if ok {
+				if i, ok := m.listView.list.SelectedItem().(listItemViewModel); ok {
 					m.listItemView = i
 					m.currentView = 3
 					m.viewportView.viewport.Style.MarginLeft(20)
 				}
 				return m, nil
-			} else {
-				m.currentView = 1
 			}
+			m.currentView = 1
 		}
 
 	case tea.MouseMsg:
@@ -204,43 +298,42 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Update the current view based on the view state
 	switch m.currentView {
 	case 1:
 		var cmd tea.Cmd
 		m.listView.list, cmd = m.listView.list.Update(msg)
 		return m, cmd
+
 	case 2:
 		var cmd tea.Cmd
 		m.textareaView.textarea, cmd = m.textareaView.textarea.Update(msg)
 		out, _ := glamour.Render(m.textareaView.textarea.Value(), "dark")
 		m.viewportView.viewport.SetContent(out)
 		return m, cmd
-	case 3:
 
+	case 3:
 		var cmd tea.Cmd
-		// var width = m.viewportView.viewport.Style.GetWidth()
-		// m.viewportView.viewport.Width = width * 1
 		m.viewportView.viewport, cmd = m.viewportView.viewport.Update(msg)
 		return m, cmd
 
 	default:
-		return m, nil
+		return m, tea.Batch(cmds...)
 	}
 }
 
 /* ----------------------------------------------------------------------------------------------------------------------- */
 
 // Fetch dummy items for the list (later this will be fetched from the database)
-func fetchItems() tea.Msg {
-	dummyItems := []listItemViewModel{
-		{title: "HTML", desc: "HTML (HyperText Markup Language) is the standard markup language used to create and structure web pages.", content: "HTML Content goes here..."},
-		{title: "CSS", desc: "CSS (Cascading Style Sheets) is a style sheet language used for describing the presentation of a document written in a markup language like HTML.", content: "CSS Content goes here..."},
-		{title: "JavaScript", desc: "JavaScript is a programming language used to add interactivity and dynamic behavior to web pages.", content: "JavaScript Content goes here..."},
-		{title: "React", desc: "React is a JavaScript library for building user interfaces. It is maintained by Facebook and a community of individual developers and companies.", content: "React Content goes here..."},
-		{title: "Vue.js", desc: "Vue.js is a progressive JavaScript framework for building user interfaces. It is designed to be incrementally adoptable, and focuses on the view layer.", content: "Vue.js Content goes here..."},
+func fetchItems(username string) tea.Msg {
+	// Make an API call or database query to fetch the user's list items
+	userItems := []listItemViewModel{
+		{title: "User Item 1", desc: "Description for User Item 1", content: "User Item 1 content"},
+		{title: "User Item 2", desc: "Description for User Item 2", content: "User Item 2 content"},
+		{title: "User Item 3", desc: "Description for User Item 3", content: "User Item 3 content"},
 	}
 
-	return itemsMsg{items: dummyItems}
+	return itemsMsg{items: userItems}
 }
 
 // ListMiddleware returns a Wish middleware that sets up the Bubble Tea program
@@ -251,20 +344,35 @@ func ListMiddleware() wish.Middleware {
 			wish.Fatalln(s, "no active terminal, skipping")
 			return nil
 		}
+
+		form := huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().Title("Username").Key("username"),
+				huh.NewInput().Title("Password").EchoMode(huh.EchoModePassword),
+			),
+		)
+
+		style := lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder()).
+			Padding(1, 2).
+			BorderForeground(lipgloss.Color("#444444")).
+			Foreground(lipgloss.Color("#7571F9"))
+
 		l := list.New([]list.Item{}, list.NewDefaultDelegate(), 6, 24)
 		l.Title = "your notes -> "
 		t := textarea.New()
-		t.Placeholder = "Enter some text..."
+		t.Placeholder = "Enter some text…"
 		t.Focus()
-		// t.SetWidth(100)
-		// t.SetHeight(40)
 		t.ShowLineNumbers = true
 		t.Cursor.Blink = true
 		t.CharLimit = 10000
 		v := viewport.New(100, 40)
-		v.SetContent("Viewport content goes here...")
-
+		v.SetContent("Viewport content goes here…")
 		m := model{
+			formModel: &formModel{
+				form:  form,
+				style: style,
+			},
 			listView:     listViewModel{list: l},
 			textareaView: textareaViewModel{textarea: t},
 			viewportView: viewportViewModel{viewport: v},
