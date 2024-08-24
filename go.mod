@@ -11,6 +11,7 @@ require (
 	github.com/charmbracelet/log v0.4.0
 	github.com/charmbracelet/ssh v0.0.0-20240604154955-a40c6a0d028f
 	github.com/charmbracelet/wish v1.4.0
+	github.com/lib/pq v1.10.9
 	github.com/muesli/termenv v0.15.3-0.20240618155329-98d742f6907a
 )
 

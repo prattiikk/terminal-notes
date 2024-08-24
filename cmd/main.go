@@ -12,7 +12,6 @@ import (
 	"github.com/charmbracelet/log"
 	"github.com/charmbracelet/ssh"
 	"github.com/charmbracelet/wish"
-	"github.com/charmbracelet/wish/logging"
 	middlewares "github.com/prattiikk/terminal_notion/internal/app/middleware"
 )
 
@@ -26,7 +25,6 @@ func main() {
 		wish.WithAddress(net.JoinHostPort(host, port)),
 		wish.WithHostKeyPath(".ssh/id_ed25519"),
 		wish.WithMiddleware(
-			logging.Middleware(),
 			middlewares.ListMiddleware(),
 		),
 	)
@@ -52,3 +50,4 @@ func main() {
 		log.Error("Could not stop server", "error", err)
 	}
 }
+

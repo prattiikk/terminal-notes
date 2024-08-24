@@ -1,8 +1,10 @@
 package middlewares
 
-import (
-	"fmt"
+// postgresql://article%20list_owner:UnHc9jlDV7Oo@ep-orange-bush-a19fqe45.ap-southeast-1.aws.neon.tech/article%20list?sslmode=require
 
+import (
+	"database/sql"
+	"fmt"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -14,6 +16,10 @@ import (
 	"github.com/charmbracelet/wish"
 	"github.com/charmbracelet/wish/bubbletea"
 	"github.com/muesli/termenv"
+	"log"
+	"strings"
+
+	_ "github.com/lib/pq"
 )
 
 // Styles
@@ -29,6 +35,11 @@ type model struct {
 	currentView  int
 	quitting     bool
 	loggedIn     bool
+	user         userDetails
+}
+type userDetails struct {
+	username string
+	password string
 }
 
 // Define the form model struct
@@ -190,6 +201,13 @@ func (m model) View() string {
 	return m.formModel.form.View()
 }
 
+func authenticate(username, password string) bool {
+	// Simple hard-coded credentials for demonstration
+	const validUsername = "user"
+	const validPassword = "pass"
+	return username == validUsername && password == validPassword
+}
+
 /* UPDATE METHODS */
 
 // Update method to handle key presses and window resizing
@@ -214,15 +232,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.loggedIn {
 				// Successfully logged in; redirect to the list view
 				username := m.formModel.form.GetString("username")
-				fmt.Println("form is in update state with values:", username)
-				m.currentView = 1
-				m.loggedIn = true
+				password := m.formModel.form.GetString("password")
 
-				// Command to fetch the user's list items
-				cmd := func() tea.Msg {
-					return fetchItems(username)
+				if authenticate(username, password) {
+					// store the username and password
+					m.user.username = username
+					m.user.password = password
+					fmt.Println(m.user.username, " with password : ", m.user.password)
+					m.currentView = 1
+					m.loggedIn = true
+					cmd := func() tea.Msg {
+						return fetchItems(username)
+					}
+					cmds = append(cmds, cmd)
+				} else {
+					// Handle invalid credentials (e.g., display an error message)
+					fmt.Println("Invalid username or password")
 				}
-				cmds = append(cmds, cmd)
 
 				// Return the updated model and combined commands
 				return m, tea.Batch(cmds...)
@@ -258,22 +284,60 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "ctrl+e":
 			if m.textareaView.showTextArea {
-				newItem := listItemViewModel{
-					title: m.textareaView.textarea.Value(),
-					desc:  "Description for " + m.textareaView.textarea.Value(),
+				// Get the full content from the textarea
+				fullText := m.textareaView.textarea.Value()
+
+				// Split the content by lines
+				lines := strings.Split(fullText, "\n")
+
+				// Extract the title, description, and content
+				var title, desc, content string
+				if len(lines) > 0 {
+					title = lines[0]
 				}
+				if len(lines) > 1 {
+					desc = lines[1]
+				}
+				if len(lines) > 2 {
+					content = strings.Join(lines[2:], "\n")
+				}
+
+				// Create a new item with the extracted values
+				newItem := listItemViewModel{
+					title:   title,
+					desc:    desc,
+					content: content,
+				}
+
+				// Add the new item to the database
+				err := AddItemToDB(newItem)
+				if err != nil {
+					fmt.Println("Error adding item to database:", err)
+				} else {
+					fmt.Println("Item added to the database successfully.")
+				}
+
+				// Insert the new item into the list and update the view
 				m.listView.list.InsertItem(len(m.listView.list.Items()), newItem)
 				m.textareaView.showTextArea = false
 				m.currentView = 1
 				return m, nil
 			}
-
 		case "ctrl+z":
 			if m.currentView == 1 {
 				if i, ok := m.listView.list.SelectedItem().(listItemViewModel); ok {
+					fmt.Println("item number selected is : ", i.title)
+					fmt.Println("item number selected is : ", i.Description())
+					fmt.Println("item number selected is : ", i.content)
+					fmt.Println("item number selected is : ", i.desc)
+					fmt.Println("item number selected is : ", i.Title())
+
 					m.listItemView = i
 					m.currentView = 3
+					m.viewportView.viewport.SetContent(i.content)
+
 					m.viewportView.viewport.Style.MarginLeft(20)
+
 				}
 				return m, nil
 			}
@@ -348,7 +412,7 @@ func ListMiddleware() wish.Middleware {
 		form := huh.NewForm(
 			huh.NewGroup(
 				huh.NewInput().Title("Username").Key("username"),
-				huh.NewInput().Title("Password").EchoMode(huh.EchoModePassword),
+				huh.NewInput().Title("Password").Key("password").EchoMode(huh.EchoModePassword),
 			),
 		)
 
@@ -381,4 +445,49 @@ func ListMiddleware() wish.Middleware {
 		return tea.NewProgram(m, tea.WithInput(s), tea.WithOutput(s), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	}
 	return bubbletea.MiddlewareWithProgramHandler(teaHandler, termenv.ANSI256)
+}
+
+// openDB opens and returns a database connection.
+func openDB() (*sql.DB, error) {
+	connStr := "postgresql://article%20list_owner:UnHc9jlDV7Oo@ep-orange-bush-a19fqe45.ap-southeast-1.aws.neon.tech/article%20list?sslmode=require"
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		return nil, err
+	}
+	return db, nil
+}
+func AddItemToDB(item listItemViewModel) error {
+	db, err := openDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	query := `INSERT INTO items (title, description, content) VALUES ($1, $2, $3)`
+	_, err = db.Exec(query, item.title, item.desc, item.content)
+	return err
+}
+
+// Example usage to check the database connection
+func CheckDBVersion() {
+	db, err := openDB()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	rows, err := db.Query("SELECT version()")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	var version string
+	for rows.Next() {
+		err := rows.Scan(&version)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	fmt.Printf("version=%s\n", version)
 }
